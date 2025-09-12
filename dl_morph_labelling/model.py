@@ -37,9 +37,9 @@ def get_robot_external_set():
 
 def robot_train_fastai_model_classification(model_df, count):
     dls = ImageDataLoaders.from_df(model_df,
-                                   fn_col=0,
-                                   label_col=1,
-                                   valid_col=2,
+                                   fn_col='fname',
+                                    label_col='label',
+                                    valid_col='is_valid',
                                    item_tfms=None,
                                    batch_tfms=None,
                                    y_block=CategoryBlock(),
