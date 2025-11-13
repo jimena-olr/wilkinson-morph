@@ -1,1 +1,78 @@
-# (paste the same content as above)
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Model checkpoints and weights
+*.pth
+*.h5
+*.pkl
+*.pt
+dl_morph_labelling/checkpoints/
+
+# Large data files
+*.tfrecord
+dl_morph_labelling/MARCO/*.tfrecord
+
+# Image files (ignore everywhere)
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.bmp
+*.gif
+*.svg
+*.webp
+
+# Project image directories (explicit)
+dl_morph_labelling/images/
+dl_morph_labelling/external_test_robot/
+dl_morph_labelling/C3/
+dl_morph_labelling/MARCO/out/
+dl_morph_labelling/MARCO/out/clear_subset/
+
+# CSV data files (optional - uncomment if sensitive)
+# *.csv
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+
+# Environment variables
+.env
