@@ -3,10 +3,12 @@ pandas
 fastai
 rdkit-pypi
 mordred
-tqdm
 opencv-python
-sklearn
+scikit-learn
 fastai
 deepchem
 uamc-spectrophore
-timm
+tqdm
+torch
+torchvision
+torchaudio
