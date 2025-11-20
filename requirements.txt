@@ -13,3 +13,4 @@ torch
 torchvision
 torchaudio
 timm
+wandb>=0.16

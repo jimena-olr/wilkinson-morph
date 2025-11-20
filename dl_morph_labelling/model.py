@@ -7,8 +7,10 @@ from sklearn.model_selection import StratifiedKFold
 from tqdm import tqdm
 import re
 from fastai.vision.all import *
+from fastai.callback.tracker import CSVLogger
 from src.utils import args
 from dl_morph_labelling.robot_image_augmentation import RobotImageAugmentations
+from pathlib import Path
 
 def get_robot_aug_df():
     print('GETTING ROBOT AUG DF')
@@ -36,34 +38,61 @@ def get_robot_external_set():
     return external_df[external_df.label != 'misc']
 
 def robot_train_fastai_model_classification(model_df, count):
-    dls = ImageDataLoaders.from_df(model_df,
-                                   fn_col=0,
-                                   label_col=1,
-                                   valid_col=2,
-                                   item_tfms=None,
-                                   batch_tfms=None,
-                                   y_block=CategoryBlock(),
-                                   bs=32,
-                                   shuffle=True)
+    # --- build DataLoaders ---
+    dls = ImageDataLoaders.from_df(
+        model_df,
+        fn_col='fname',        # filename column
+        label_col='label',     # label column
+        valid_col='is_valid',  # 0 = train, 1 = val
+        item_tfms=Resize(224),                         # ensure uniform size
+        batch_tfms=Normalize.from_stats(*imagenet_stats),  # good default for ImageNet models
+        y_block=CategoryBlock(),
+        bs=32,
+        shuffle=True
+    )
+
     metrics = [error_rate, accuracy]
     learn = vision_learner(dls, args.model, metrics=metrics)
-    learn.fine_tune(20, cbs=[SaveModelCallback(monitor='valid_loss', fname=f'./{args.no_augs}_best_cbs.pth'),
-                            ReduceLROnPlateau(monitor='valid_loss',
-                                              min_delta=0.1,
-                                              patience=3),
-                             EarlyStoppingCallback(monitor='accuracy', min_delta=0.1, patience=10)])
 
-    os.makedirs(f'./dl_morph_labelling/checkpoints/figures/{args.model}', exist_ok=True)
+    # --- ensure output dirs exist ---
+    figs_dir = Path(f'./dl_morph_labelling/checkpoints/figures/{args.model}')
+    models_dir = Path(f'./dl_morph_labelling/checkpoints/models/{args.model}')
+    logs_dir = Path(f'./dl_morph_labelling/checkpoints/logs/{args.model}')
+
+    figs_dir.mkdir(parents=True, exist_ok=True)
+    models_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    # --- callbacks, including CSVLogger ---
+    cbs = [
+        CSVLogger(fname=logs_dir / f'fold_{count}.csv'),              # 🔴 per-fold CSV
+        SaveModelCallback(monitor='valid_loss',
+                          fname=f'./{args.no_augs}_best_cbs.pth'),
+        ReduceLROnPlateau(monitor='valid_loss',
+                          min_delta=0.1,
+                          patience=3),
+        EarlyStoppingCallback(monitor='accuracy',
+                              min_delta=0.1,
+                              patience=10),
+    ]
+
+    # --- train ---
+    learn.fine_tune(20, cbs=cbs)
+
+    # --- confusion matrix ---
     interp = ClassificationInterpretation.from_learner(learn)
     interp.plot_confusion_matrix()
-    plt.savefig(f'./dl_morph_labelling/checkpoints/figures/{args.model}/conf_mtrx_val_test_{count}')
+    plt.savefig(figs_dir / f'conf_mtrx_val_test_{count}')
 
+    # --- final metrics + exported model ---
     print(learn.validate())
-    learn.export(f'./dl_morph_labelling/checkpoints/models/{args.model}/trained_model_{args.no_augs}_{count}.pkl')
+    learn.export(models_dir / f'trained_model_{args.no_augs}_{count}.pkl')
+
 
 def robot_kfold_fastai(robot_df, n_splits):
     print(f'Training Robot FastAI model with no_augs = {args.no_augs}')
     os.makedirs(f'./dl_morph_labelling/checkpoints/models/{args.model}/', exist_ok=True)
+    robot_df = robot_df.reset_index(drop=True)
     paths = robot_df.fname
     labels = robot_df.label
     kfold = StratifiedKFold(n_splits=n_splits, shuffle=True)
@@ -86,6 +115,7 @@ def robot_kfold_fastai(robot_df, n_splits):
             augmentor = RobotImageAugmentations()
             augmentor.do_image_augmentations(raw_model_df)
             aug_model_df = get_robot_aug_df()
+            aug_model_df.loc[:, 'is_valid'] = 0
             model_df = pd.concat([aug_model_df, val_df])
 
         trainer = robot_train_fastai_model_classification(model_df, count)
@@ -94,14 +124,13 @@ def robot_kfold_fastai(robot_df, n_splits):
 
         if args.robot_test:
             path = './dl_morph_labelling/external_test_robot'
-
             model = load_learner(
                 f'./dl_morph_labelling/checkpoints/models/{args.model}/trained_model_{args.no_augs}_{count}.pkl',
                 cpu=False)
             test_dl = model.dls.test_dl(get_robot_external_set(), with_labels=True)
-            preds, _, decoded = model.get_preds(dl=test_dl, with_decoded=True)
-            print(accuracy_score(_, decoded))
-            test_metrics.append(accuracy_score(_, decoded))
+            preds, targets, decoded = model.get_preds(dl=test_dl, with_decoded=True)
+            print(accuracy_score(targets, decoded))
+            test_metrics.append(accuracy_score(targets, decoded))
 
         count += 1
 
