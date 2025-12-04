@@ -34,8 +34,10 @@ def get_robot_external_set():
             label_list.append(label)
     external_df = pd.DataFrame({'fname': img_list,
                                 'label': label_list})
+    external_df["label"] = external_df["label"].astype(str)
 
     return external_df[external_df.label != 'misc']
+
 
 def robot_train_fastai_model_classification(model_df, count):
     # --- build DataLoaders ---
@@ -92,13 +94,15 @@ def robot_train_fastai_model_classification(model_df, count):
 def robot_kfold_fastai(robot_df, n_splits):
     print(f'Training Robot FastAI model with no_augs = {args.no_augs}')
     os.makedirs(f'./dl_morph_labelling/checkpoints/models/{args.model}/', exist_ok=True)
-    robot_df = robot_df.reset_index(drop=True)
+    robot_df = robot_df.reset_index(drop=True).copy()
+    robot_df["label"] = robot_df["label"].astype(str)
     paths = robot_df.fname
     labels = robot_df.label
     kfold = StratifiedKFold(n_splits=n_splits, shuffle=True)
     count = 0
     best_metrics = []
     test_metrics = []
+
     for train_index, val_index in tqdm(kfold.split(paths, labels)):
         X_train, X_val = paths[train_index], paths[val_index]
         y_train, y_val = labels[train_index], labels[val_index]
@@ -111,22 +115,31 @@ def robot_kfold_fastai(robot_df, n_splits):
         if args.no_augs:
             model_df = pd.concat([train_df, val_df])
         else:
+            aug_dir = Path('./dl_morph_labelling/images/aug_images')
+            if aug_dir.exists():
+                shutil.rmtree(aug_dir)
+            aug_dir.mkdir(parents=True, exist_ok=True)
+
             raw_model_df = pd.concat([train_df, val_df])
             augmentor = RobotImageAugmentations()
             augmentor.do_image_augmentations(raw_model_df)
+
             aug_model_df = get_robot_aug_df()
             aug_model_df.loc[:, 'is_valid'] = 0
             model_df = pd.concat([aug_model_df, val_df])
 
         trainer = robot_train_fastai_model_classification(model_df, count)
-        model = load_learner(f'./dl_morph_labelling/checkpoints/models/{args.model}/trained_model_{args.no_augs}_{count}.pkl', cpu=False)
+        model = load_learner(
+            f'./dl_morph_labelling/checkpoints/models/{args.model}/trained_model_{args.no_augs}_{count}.pkl',
+            cpu=False
+        )
         best_metrics.append(model.final_record)
 
         if args.robot_test:
-            path = './dl_morph_labelling/external_test_robot'
             model = load_learner(
                 f'./dl_morph_labelling/checkpoints/models/{args.model}/trained_model_{args.no_augs}_{count}.pkl',
-                cpu=False)
+                cpu=False
+            )
             test_dl = model.dls.test_dl(get_robot_external_set(), with_labels=True)
             preds, targets, decoded = model.get_preds(dl=test_dl, with_decoded=True)
             print(accuracy_score(targets, decoded))
@@ -136,5 +149,8 @@ def robot_kfold_fastai(robot_df, n_splits):
 
     print(best_metrics)
     print(f'mean valid acc = {np.mean([best_metrics[x][2] for x in range(n_splits)])}')
-    print(f'mean test acc = {np.mean(test_metrics)}')
+    if test_metrics:
+        print(f'mean test acc = {np.mean(test_metrics)}')
+    else:
+        print('mean test acc = nan (no external test run; args.robot_test=False)')
     return None

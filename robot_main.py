@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 import pandas as pd
+from fastai.vision.all import *
 from sklearn.model_selection import train_test_split
 
 from dl_morph_labelling.preprocessing import (
@@ -10,6 +11,7 @@ from dl_morph_labelling.preprocessing import (
     build_head1_manifest,
 )
 from dl_morph_labelling.model import robot_kfold_fastai
+from src.utils import args as cfg_args   # global config used elsewhere (model name, no_augs)
 
 
 def run_head1_binary(out_size=(224, 224), n_splits=5, test_size=0.2, seed=42):
@@ -22,6 +24,7 @@ def run_head1_binary(out_size=(224, 224), n_splits=5, test_size=0.2, seed=42):
       3. Split that manifest into an 80/20 stratified train/test split.
       4. Run k-fold CV (on the 80% train+val pool only) via robot_kfold_fastai.
       5. Save train/test manifests for later evaluation.
+      6. Evaluate one trained fold on the held-out 20% test set.
     """
     base = Path("./dl_morph_labelling")
 
@@ -100,7 +103,41 @@ def run_head1_binary(out_size=(224, 224), n_splits=5, test_size=0.2, seed=42):
     # robot_kfold_fastai expects a df with columns ['fname', 'label']
     print("[Head1] Starting k-fold training on train/val pool …")
     robot_kfold_fastai(trainval_df[["fname", "label"]], n_splits=n_splits)
-    print("[Head1] Finished k-fold training. Test set is frozen on disk; evaluate separately when ready.")
+    print("[Head1] Finished k-fold training. Test set is frozen on disk; evaluating now on held-out test set.")
+
+    # --- 6) Evaluate one trained fold on the held-out 20% test set ---
+    print("\n[Head1] Running held-out test set evaluation...")
+
+    # Reload test df from disk (for cleanliness)
+    test_df = pd.read_csv(test_path)
+    test_df["label"] = test_df["label"].astype(str)
+    test_df["is_valid"] = 1  # mark everything as validation for this dls
+
+    # Build DataLoaders for evaluation
+    dls_test = ImageDataLoaders.from_df(
+        test_df,
+        fn_col="fname",
+        label_col="label",
+        valid_col="is_valid",
+        item_tfms=Resize(224),
+        batch_tfms=Normalize.from_stats(*imagenet_stats),
+        y_block=CategoryBlock(),
+        bs=32,
+        shuffle=False,
+    )
+
+    # Load one of the trained models from k-fold (e.g., fold 0)
+    model_dir = base / "checkpoints" / "models" / cfg_args.model
+    model_path = model_dir / f"trained_model_{cfg_args.no_augs}_0.pkl"
+    print(f"[Head1] Loading model from: {model_path}")
+
+    learn = load_learner(model_path)
+    learn.dls = dls_test
+
+    # Evaluate
+    test_metrics = learn.validate()
+    print("[Head1] Held-out test set metrics:", test_metrics)
+    print("Format = [valid_loss, error_rate, accuracy]")
 
 
 def run_robot_original(n_splits=5):
@@ -145,9 +182,9 @@ if __name__ == "__main__":
         default=42,
         help="Random seed for splitting (default: 42).",
     )
-    args = parser.parse_args()
+    cli_args = parser.parse_args()
 
-    if args.mode == "head1":
-        run_head1_binary(n_splits=args.splits, test_size=args.test_size, seed=args.seed)
+    if cli_args.mode == "head1":
+        run_head1_binary(n_splits=cli_args.splits, test_size=cli_args.test_size, seed=cli_args.seed)
     else:
-        run_robot_original(n_splits=args.splits)
+        run_robot_original(n_splits=cli_args.splits)
