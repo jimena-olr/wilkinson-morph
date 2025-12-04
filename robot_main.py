@@ -111,20 +111,6 @@ def run_head1_binary(out_size=(224, 224), n_splits=5, test_size=0.2, seed=42):
     # Reload test df from disk (for cleanliness)
     test_df = pd.read_csv(test_path)
     test_df["label"] = test_df["label"].astype(str)
-    test_df["is_valid"] = 1  # mark everything as validation for this dls
-
-    # Build DataLoaders for evaluation
-    dls_test = ImageDataLoaders.from_df(
-        test_df,
-        fn_col="fname",
-        label_col="label",
-        valid_col="is_valid",
-        item_tfms=Resize(224),
-        batch_tfms=Normalize.from_stats(*imagenet_stats),
-        y_block=CategoryBlock(),
-        bs=32,
-        shuffle=False,
-    )
 
     # Load one of the trained models from k-fold (e.g., fold 0)
     model_dir = base / "checkpoints" / "models" / cfg_args.model
@@ -132,12 +118,16 @@ def run_head1_binary(out_size=(224, 224), n_splits=5, test_size=0.2, seed=42):
     print(f"[Head1] Loading model from: {model_path}")
 
     learn = load_learner(model_path)
-    learn.dls = dls_test
 
-    # Evaluate
-    test_metrics = learn.validate()
+    # Build a test dataloader using the *existing* training dls
+    # (same transforms, same normalization, etc.)
+    test_dl = learn.dls.test_dl(test_df, with_labels=True)
+
+    # Evaluate on the held-out test set
+    test_metrics = learn.validate(dl=test_dl)
     print("[Head1] Held-out test set metrics:", test_metrics)
     print("Format = [valid_loss, error_rate, accuracy]")
+
 
 
 def run_robot_original(n_splits=5):
